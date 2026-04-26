@@ -13,6 +13,10 @@ GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 
 
+####################################
+# TELEGRAM
+####################################
+
 BOT_TOKEN=os.environ["BOT_TOKEN"]
 CHAT_ID=os.environ["CHAT_ID"]
 
@@ -27,10 +31,14 @@ def kirim(msg):
  }
  )
 
+ print(r.status_code)
+ print(r.text)
 
-###################################
+
+
+####################################
 # 300 STOCK UNIVERSE
-###################################
+####################################
 
 stocks=pd.read_csv(
 "saham_list.csv",
@@ -39,140 +47,163 @@ header=None
 
 
 
-###################################
-# FUNDAMENTAL ENGINE
-###################################
+####################################
+# QUALITY / VALUE FACTOR
+####################################
 
-def fundamental_score(stock):
+def factor_fundamental(stock):
 
  try:
 
    info=yf.Ticker(stock).info
 
-   score=3
+   pbv=info.get(
+   "priceToBook",5
+   )
 
-   pbv=info.get("priceToBook")
-   pe=info.get("trailingPE")
-   roe=info.get("returnOnEquity")
+   pe=info.get(
+   "trailingPE",30
+   )
 
-   if pbv and pbv<3:
-      score+=2
+   roe=info.get(
+   "returnOnEquity",0
+   )
 
-   if pe and pe<20:
-      score+=2
+   score=50
 
-   if roe and roe>.15:
-      score+=3
+   if pbv<3:
+      score+=15
+
+   if pe<20:
+      score+=15
+
+   if roe>.15:
+      score+=20
 
    return score
 
  except:
-   return 3
+   return 50
 
 
 
-###################################
-# 3 MODEL ENSEMBLE
-###################################
 
-def ensemble_vote(df):
+####################################
+# ENSEMBLE AI
+####################################
+
+def ensemble_score(df):
 
  try:
 
-  d=df.copy()
+   d=df.copy()
 
-  d["ret"]=d.Close.pct_change()
-  d["ma20"]=d.Close.rolling(20).mean()
-  d["ma50"]=d.Close.rolling(50).mean()
+   d["ret"]=d.Close.pct_change()
+   d["ma20"]=d.Close.rolling(20).mean()
+   d["ma50"]=d.Close.rolling(50).mean()
 
-  d=d.dropna()
+   d=d.dropna()
 
-  if len(d)<120:
-      return .5,0
-
-  X=d[
-  ["Close","Volume","ma20","ma50"]
-  ]
-
-  y=(d.ret.shift(-5)>0).astype(int)
+   if len(d)<120:
+      return .5
 
 
-  Xtrain=X[:-1]
-  ytrain=y[:-1]
+   X=d[
+   ["Close","Volume","ma20","ma50"]
+   ]
+
+   y=(d.ret.shift(-5)>0).astype(int)
 
 
-  models=[
-   RandomForestClassifier(
-    n_estimators=60
-   ),
-
-   GradientBoostingClassifier(),
-
-   LogisticRegression()
-  ]
+   Xtrain=X[:-1]
+   ytrain=y[:-1]
 
 
-  probs=[]
-  votes=0
+   models=[
+    RandomForestClassifier(
+      n_estimators=70
+    ),
 
-  for m in models:
+    GradientBoostingClassifier(),
+
+    LogisticRegression()
+   ]
+
+
+   weights=[
+    .4,
+    .35,
+    .25
+   ]
+
+   p=0
+
+
+   for m,w in zip(
+      models,
+      weights
+   ):
 
       m.fit(
        Xtrain,
        ytrain
       )
 
-      p=m.predict_proba(
-       [X.iloc[-1]]
+      prob=m.predict_proba(
+      [X.iloc[-1]]
       )[0][1]
 
-      probs.append(p)
-
-      if p>.55:
-         votes+=1
+      p+=prob*w
 
 
-  return np.mean(probs),votes
+   return p
 
  except:
-  return .5,0
+   return .5
 
 
 
-###################################
+
+####################################
 # INSTITUTIONAL ACCUMULATION
-###################################
+####################################
 
-def accumulation_score(close,vol):
+def accumulation_factor(
+close,
+vol
+):
 
- score=0
+ s=0
 
  try:
 
-   # Volume surge
-   if vol.tail(5).mean() > \
-      vol.tail(30).mean()*1.3:
-      score+=4
-
-
-   # Volatility contraction
-   vr=close.pct_change().tail(
-   20
-   ).std()
-
-   if vr<0.018:
-      score+=3
-
-
-   # Tight range breakout pressure
+   # volume anomaly
    if (
-    close.tail(15).max()/
-    close.tail(15).min()
-   )<1.08:
-      score+=3
+    vol.tail(5).mean() >
+    vol.tail(30).mean()*1.5
+   ):
+      s+=30
 
 
-   return score
+   # volatility contraction
+   vc=close.pct_change(
+   ).tail(20).std()
+
+   if vc<0.018:
+      s+=20
+
+
+   # tight base
+   rng=(
+   close.tail(15).max()/
+   close.tail(15).min()
+   )
+
+   if rng<1.08:
+      s+=20
+
+
+   return s
 
  except:
    return 0
@@ -180,16 +211,36 @@ def accumulation_score(close,vol):
 
 
 
-###################################
-# MAIN ENGINE
-###################################
+####################################
+# RISK FILTER
+####################################
 
-strong=[]
-watch=[]
-avoid=[]
+def risk_factor(close):
+
+ try:
+
+   vol=close.pct_change(
+   ).tail(30).std()
+
+   if vol>.045:
+      return -20
+
+   return 0
+
+ except:
+   return 0
+
+
+
+
+####################################
+# MAIN ENGINE
+####################################
+
+rank=[]
 
 print(
-"V9 INSTITUTIONAL ACCUMULATION..."
+"V10 INSTITUTIONAL ALPHA..."
 )
 
 
@@ -198,10 +249,10 @@ for s in stocks:
  try:
 
    df=yf.download(
-      s,
-      period="12mo",
-      auto_adjust=True,
-      progress=False
+    s,
+    period="12mo",
+    auto_adjust=True,
+    progress=False
    )
 
    if len(df)<120:
@@ -214,112 +265,107 @@ for s in stocks:
    vol=df.Volume.squeeze()
 
 
-   alpha=0
 
+   ##################
+   # FACTORS
+   ##################
 
-   #################
-   # FUNDAMENTAL
-   #################
+   quality=factor_fundamental(
+   s
+   )
 
-   alpha+=fundamental_score(s)
-
-
-
-   #################
-   # ICHIMOKU
-   #################
 
    ichi=IchimokuIndicator(
     high,
     low
    )
 
+   trend=50
+
    if close.iloc[-1] > \
-   ichi.ichimoku_base_line().iloc[-1]:
-      alpha+=3
+   ichi.ichimoku_base_line(
+   ).iloc[-1]:
+      trend=75
 
 
-
-   #################
-   # RELATIVE STRENGTH
-   #################
 
    rs=(
-    close.iloc[-1]/
-    close.iloc[-60]
+   close.iloc[-1]/
+   close.iloc[-60]
    )-1
 
+
+   momentum=50
+
    if rs>.05:
-      alpha+=3
+      momentum=80
 
 
 
-   #################
-   # ACCUMULATION
-   #################
-
-   alpha+=accumulation_score(
+   acc=accumulation_factor(
       close,
       vol
    )
 
 
+   risk=risk_factor(
+      close
+   )
 
-   #################
-   # ENSEMBLE AI
-   #################
 
-   prob,votes=ensemble_vote(
+   ml=ensemble_score(
       df
-   )
-
-   alpha+=votes*3
-
-   conf=round(
-    alpha*(1+prob),
-    1
-   )
+   )*100
 
 
 
-   #################
-   # DISTRIBUTION AVOID
-   #################
+   ################################
+   # INSTITUTIONAL ALPHA MODEL
+   ################################
 
-   if (
-    votes==0 and
-    rs<0 and
-    prob<0.30
-   ):
-      avoid.append(
-       (s,prob)
-      )
+   alpha=round(
+
+    quality*.25+
+
+    trend*.20+
+
+    momentum*.20+
+
+    acc*.20+
+
+    ml*.15+
+
+    risk
+
+   ,1)
+
+
+
+   ################################
+   # GRADES
+   ################################
+
+   if alpha>=75:
+      grade="A+"
+
+   elif alpha>=68:
+      grade="A"
+
+   elif alpha>=60:
+      grade="B"
+
+   else:
       continue
 
 
 
-   #################
-   # CLASSIFY
-   #################
-
-   if conf>=24:
-
-      strong.append(
-       (
-        s,
-        conf,
-        votes
-       )
-      )
-
-   else:
-
-      watch.append(
-       (
-        s,
-        conf
-       )
-      )
+   rank.append(
+    (
+     s,
+     alpha,
+     grade
+    )
+   )
 
 
  except:
@@ -328,26 +374,26 @@ for s in stocks:
 
 
 
-strong=sorted(
-strong,
+rank=sorted(
+rank,
 key=lambda x:x[1],
 reverse=True
 )
 
 
 
-###################################
+####################################
 # TELEGRAM SIGNAL
-###################################
+####################################
 
-msg="🔥 V9 INSTITUTIONAL PICKS\n\n"
+msg="🔥 V10 INSTITUTIONAL ALPHA\n\n"
 
-for x in strong[:7]:
+for x in rank[:7]:
 
  line=(
- f"{x[0]} | "
- f"Conf {x[1]} "
- f"| AI {x[2]}/3"
+ f"{x[0]} "
+ f"| Score {x[1]} "
+ f"| {x[2]}"
  )
 
  print(line)

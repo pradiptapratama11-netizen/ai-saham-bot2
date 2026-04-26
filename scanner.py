@@ -5,40 +5,22 @@ import os
 import numpy as np
 
 from ta.trend import IchimokuIndicator
-from sklearn.ensemble import (
-RandomForestClassifier,
-GradientBoostingClassifier
-)
-
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-
-
-####################################
-# TELEGRAM
-####################################
 
 BOT_TOKEN=os.environ["BOT_TOKEN"]
 CHAT_ID=os.environ["CHAT_ID"]
 
-
 def kirim(msg):
+    r=requests.get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        params={
+            "chat_id":CHAT_ID,
+            "text":msg
+        }
+    )
+    print(r.status_code)
 
- r=requests.get(
- f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
- params={
- "chat_id":CHAT_ID,
- "text":msg
- }
- )
-
- print(r.status_code)
- print(r.text)
-
-
-
-####################################
-# 300 STOCK UNIVERSE
-####################################
 
 stocks=pd.read_csv(
 "saham_list.csv",
@@ -47,173 +29,157 @@ header=None
 
 
 
-####################################
-# QUALITY / VALUE FACTOR
-####################################
+###################################
+# FUNDAMENTAL FACTOR
+###################################
 
 def factor_fundamental(stock):
 
- try:
+    try:
+        info=yf.Ticker(stock).info
 
-   info=yf.Ticker(stock).info
+        pbv=info.get("priceToBook",5)
+        pe=info.get("trailingPE",30)
+        roe=info.get("returnOnEquity",0)
 
-   pbv=info.get(
-   "priceToBook",5
-   )
+        score=50
 
-   pe=info.get(
-   "trailingPE",30
-   )
+        if pbv<3:
+            score+=15
 
-   roe=info.get(
-   "returnOnEquity",0
-   )
+        if pe<20:
+            score+=15
 
-   score=50
+        if roe>.15:
+            score+=20
 
-   if pbv<3:
-      score+=15
+        return score
 
-   if pe<20:
-      score+=15
-
-   if roe>.15:
-      score+=20
-
-   return score
-
- except:
-   return 50
+    except:
+        return 50
 
 
 
-
-####################################
-# ENSEMBLE AI
-####################################
+###################################
+# WEIGHTED ENSEMBLE
+###################################
 
 def ensemble_score(df):
 
- try:
+    try:
 
-   d=df.copy()
+        d=df.copy()
 
-   d["ret"]=d.Close.pct_change()
-   d["ma20"]=d.Close.rolling(20).mean()
-   d["ma50"]=d.Close.rolling(50).mean()
+        d["ret"]=d.Close.pct_change()
+        d["ma20"]=d.Close.rolling(20).mean()
+        d["ma50"]=d.Close.rolling(50).mean()
 
-   d=d.dropna()
+        d=d.dropna()
 
-   if len(d)<120:
-      return .5
-
-
-   X=d[
-   ["Close","Volume","ma20","ma50"]
-   ]
-
-   y=(d.ret.shift(-5)>0).astype(int)
+        if len(d)<120:
+            return .5
 
 
-   Xtrain=X[:-1]
-   ytrain=y[:-1]
+        X=d[
+        ["Close","Volume","ma20","ma50"]
+        ]
+
+        y=(d.ret.shift(-5)>0).astype(int)
+
+        Xtrain=X[:-1]
+        ytrain=y[:-1]
 
 
-   models=[
-    RandomForestClassifier(
-      n_estimators=70
-    ),
+        models=[
 
-    GradientBoostingClassifier(),
+        RandomForestClassifier(
+        n_estimators=70
+        ),
 
-    LogisticRegression()
-   ]
+        GradientBoostingClassifier(),
 
+        LogisticRegression(
+         solver="liblinear",
+         max_iter=1000
+        )
 
-   weights=[
-    .4,
-    .35,
-    .25
-   ]
-
-   p=0
+        ]
 
 
-   for m,w in zip(
-      models,
-      weights
-   ):
+        weights=[.4,.35,.25]
 
-      m.fit(
-       Xtrain,
-       ytrain
-      )
+        p=0
 
-      prob=m.predict_proba(
-      [X.iloc[-1]]
-      )[0][1]
+        for m,w in zip(
+        models,
+        weights
+        ):
 
-      p+=prob*w
+            m.fit(
+             Xtrain,
+             ytrain
+            )
+
+            prob=m.predict_proba(
+            [X.iloc[-1]]
+            )[0][1]
+
+            p+=prob*w
 
 
-   return p
+        return p
 
- except:
-   return .5
-
+    except:
+        return .5
 
 
 
-####################################
+
+###################################
 # INSTITUTIONAL ACCUMULATION
-####################################
+###################################
 
 def accumulation_factor(
 close,
 vol
 ):
 
- s=0
+    s=0
 
- try:
+    try:
 
-   # volume anomaly
-   if (
-    vol.tail(5).mean() >
-    vol.tail(30).mean()*1.5
-   ):
-      s+=30
+      if vol.tail(5).mean() > \
+      vol.tail(30).mean()*1.5:
+         s+=30
 
 
-   # volatility contraction
-   vc=close.pct_change(
-   ).tail(20).std()
+      vc=close.pct_change(
+      ).tail(20).std()
 
-   if vc<0.018:
-      s+=20
-
-
-   # tight base
-   rng=(
-   close.tail(15).max()/
-   close.tail(15).min()
-   )
-
-   if rng<1.08:
-      s+=20
+      if vc<0.018:
+         s+=20
 
 
-   return s
+      rng=(
+      close.tail(15).max()/
+      close.tail(15).min()
+      )
 
- except:
-   return 0
+      if rng<1.08:
+         s+=20
+
+
+      return s
+
+    except:
+      return 0
 
 
 
 
-####################################
-# RISK FILTER
-####################################
+###################################
+# RISK
+###################################
 
 def risk_factor(close):
 
@@ -233,16 +199,15 @@ def risk_factor(close):
 
 
 
-####################################
+###################################
 # MAIN ENGINE
-####################################
+###################################
 
 rank=[]
 
 print(
-"V10 INSTITUTIONAL ALPHA..."
+"V10.1 INSTITUTIONAL ALPHA..."
 )
-
 
 for s in stocks:
 
@@ -265,19 +230,14 @@ for s in stocks:
    vol=df.Volume.squeeze()
 
 
-
-   ##################
-   # FACTORS
-   ##################
-
    quality=factor_fundamental(
    s
    )
 
 
    ichi=IchimokuIndicator(
-    high,
-    low
+   high,
+   low
    )
 
    trend=50
@@ -286,7 +246,6 @@ for s in stocks:
    ichi.ichimoku_base_line(
    ).iloc[-1]:
       trend=75
-
 
 
    rs=(
@@ -299,7 +258,6 @@ for s in stocks:
 
    if rs>.05:
       momentum=80
-
 
 
    acc=accumulation_factor(
@@ -319,33 +277,20 @@ for s in stocks:
 
 
 
-   ################################
-   # INSTITUTIONAL ALPHA MODEL
-   ################################
-
    alpha=round(
 
-    quality*.25+
-
-    trend*.20+
-
-    momentum*.20+
-
-    acc*.20+
-
-    ml*.15+
-
-    risk
+   quality*.20+
+   trend*.20+
+   momentum*.25+
+   acc*.20+
+   ml*.15+
+   risk
 
    ,1)
 
 
 
-   ################################
-   # GRADES
-   ################################
-
-   if alpha>=73:
+   if alpha>=72:
       grade="A+"
 
    elif alpha>=65:
@@ -356,7 +301,6 @@ for s in stocks:
 
    else:
       continue
-
 
 
    rank.append(
@@ -382,13 +326,19 @@ reverse=True
 
 
 
-####################################
-# TELEGRAM SIGNAL
-####################################
+###################################
+# TELEGRAM A/A+ ONLY
+###################################
 
-msg="🔥 V10 INSTITUTIONAL ALPHA\n\n"
+msg="🔥 V10.1 INSTITUTIONAL BUYS\n\n"
 
-for x in rank[:7]:
+picks=[
+r for r in rank
+if r[2]!="B"
+][:5]
+
+
+for x in picks:
 
  line=(
  f"{x[0]} "

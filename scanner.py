@@ -345,13 +345,13 @@ for s in stocks:
    # GRADES
    ################################
 
-   if alpha>=75:
+   if alpha>=73:
       grade="A+"
 
-   elif alpha>=68:
+   elif alpha>=65:
       grade="A"
 
-   elif alpha>=60:
+   elif alpha>=58:
       grade="B"
 
    else:
